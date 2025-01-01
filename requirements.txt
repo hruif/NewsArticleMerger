@@ -1,0 +1,6 @@
+transformers
+google.generativeai
+newsapi
+newspaper
+os
+flask
