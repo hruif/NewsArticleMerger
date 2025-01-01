@@ -1,4 +1,3 @@
-from transformers import pipeline
 import google.generativeai as genai
 
 gemini_api_key_file = open("gemini_api_key.txt", "r")
@@ -8,7 +7,6 @@ gemini_api_key_file.close()
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 class Merger:
-    generator = pipeline("summarization", model="facebook/bart-large-cnn")
     files = []
     summary = ""
 

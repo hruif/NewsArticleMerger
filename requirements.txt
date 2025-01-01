@@ -1,6 +1,5 @@
-transformers
 google.generativeai
-newsapi
-newspaper
-os
+newsapi-python
+newspaper3k
 flask
+lxml_html_clean
