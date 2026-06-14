@@ -3,14 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Search Page</title>
+    <title>News Article Merger</title>
+    <style>
+        body { font-family: system-ui, sans-serif; line-height: 1.6; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+        form { margin: 1.5rem 0; display: flex; gap: .5rem; }
+        input[type="text"] { flex: 1; padding: .5rem; font-size: 1rem; }
+        button { padding: .5rem 1rem; font-size: 1rem; cursor: pointer; }
+        .topics { list-style: none; padding: 0; }
+        .topics li { margin: .4rem 0; }
+        .topics a { text-decoration: none; color: #1a4fce; }
+        .topics a:hover { text-decoration: underline; }
+        .source { color: #777; font-size: .85rem; }
+        h2 { margin-top: 2rem; display: inline-block; margin-right: .75rem; }
+        .refresh { font-size: .85rem; color: #1a4fce; }
+    </style>
 </head>
 <body>
-    <h1>Search Page</h1>
+    <h1>News Article Merger</h1>
     <form action="/results" method="GET">
-        <label for="query">Enter your search:</label>
-        <input type="text" id="query" name="query" required>
+        <label for="query" hidden>Enter your search:</label>
+        <input type="text" id="query" name="query" placeholder="Search any topic…" required>
         <button type="submit">Search</button>
     </form>
+
+    {% if topics %}
+    <h2>Trending topics</h2><a class="refresh" href="/?refresh=1">Refresh</a>
+    <ul class="topics">
+        {% for topic in topics %}
+        <li>
+            <a href="/results?query={{ topic.query | urlencode }}">{{ topic.title }}</a>
+            <span class="source">— {{ topic.source_count }} source{{ 's' if topic.source_count != 1 }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
 </body>
 </html>

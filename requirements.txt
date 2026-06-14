@@ -1,5 +1,6 @@
-google.generativeai
+google-genai
 newsapi-python
 newspaper3k
 flask
 lxml_html_clean
+nh3

@@ -1,31 +1,51 @@
-import os
+import time
+
+import cache
 from merger import Merger
 from scraper import Scraper
+
+NUM_ARTICLES = 5
+ARTICLES_CACHE = "articles.json"
 
 mrgr = Merger()
 scrpr = Scraper()
 
-def get_article(query: str):
-    # get text from articles
-    articles_text = scrpr.get_articles(query, 3)
 
-    # put text from articles into text file
-    file_names = []
-    if not os.path.exists('./articles'):
-        os.makedirs('articles')
-    for i in range(len(articles_text)):
-        file_name = './articles/article' + str(i + 1) + '.txt'
-        file = open(file_name, 'w')
-        file.write(articles_text[i])
-        file.close()
-        file_names.append(file_name)
+def get_topics(count: int = 5, refresh: bool = False):
+    """Topics covered by the most distinct sources, for the homepage."""
+    return scrpr.get_trending_topics(count, refresh=refresh)
 
-    # merge articles
-    file_list_file = open('./files.txt', 'w')
-    for file_name in file_names:
-        file_list_file.write(file_name + '\n')
-    file_list_file.close()
-    mrgr.process_files('./files.txt')
 
-    # return output
-    return mrgr.summary
+def _result(html, cached, created_at):
+    return {"html": html, "cached": cached, "created_at": created_at}
+
+
+def get_article(query: str, refresh: bool = False):
+    """
+    Build (or load from cache) a merged article for `query`.
+    :return: dict with 'html', 'cached' (bool), and 'created_at' (epoch or None).
+    """
+    if not query:
+        return _result("<p>Please enter a search term.</p>", False, None)
+
+    key = " ".join(query.lower().split())
+    store = cache.load(ARTICLES_CACHE, {})
+
+    if not refresh and key in store:
+        entry = store[key]
+        return _result(entry["html"], True, entry["created_at"])
+
+    # get text from a diverse set of articles, then merge into one HTML article
+    articles_text = scrpr.get_articles(query, NUM_ARTICLES)
+    if not articles_text:
+        return _result(
+            "<p>No articles could be retrieved for that query. Try another search.</p>",
+            False,
+            None,
+        )
+
+    html = mrgr.merge_texts(articles_text)
+    created_at = time.time()
+    store[key] = {"query": query, "html": html, "created_at": created_at}
+    cache.save(ARTICLES_CACHE, store)
+    return _result(html, False, created_at)
