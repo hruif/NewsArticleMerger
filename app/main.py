@@ -1,3 +1,8 @@
+"""Pipeline glue: query -> scrape diverse articles -> merge into one HTML article.
+
+Holds the single Scraper/Merger instances and the per-query article cache.
+"""
+
 import time
 
 import cache

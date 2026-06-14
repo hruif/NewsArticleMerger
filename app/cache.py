@@ -4,9 +4,9 @@ import json
 import os
 import tempfile
 
-# Repo root = parent of the directory this file lives in (app/).
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CACHE_DIR = os.path.join(ROOT_DIR, "cache")
+import config
+
+CACHE_DIR = os.path.join(config.ROOT_DIR, "cache")
 
 
 def load(name: str, default=None):

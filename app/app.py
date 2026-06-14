@@ -3,6 +3,10 @@ from flask import Flask, jsonify, render_template, request
 
 import main
 
+# Request flow:
+#   /            -> search page + trending topics (main.get_topics)
+#   /results     -> loading screen that fetches the article asynchronously
+#   /api/article -> does the slow scrape+merge (main.get_article), returns safe HTML
 app = Flask(__name__)
 
 # Tags/attributes allowed in the merged article HTML. Anything else (scripts,
@@ -40,7 +44,17 @@ def results_page():
 def api_article():
     query = request.args.get("query", "")
     refresh = request.args.get("refresh") == "1"
-    result = main.get_article(query, refresh=refresh)
+    try:
+        result = main.get_article(query, refresh=refresh)
+    except Exception as e:
+        # Anything that fails here (scrape/merge/model) must not be cached; return
+        # a friendly message so the loading screen shows it instead of hanging.
+        print(f"Failed to build article for {query!r}: {e}")
+        return jsonify(
+            html="<p>Sorry, something went wrong building this article. Please try again.</p>",
+            cached=False,
+            created_at=None,
+        )
     safe_html = nh3.clean(
         result["html"],
         tags=ALLOWED_TAGS,

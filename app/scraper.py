@@ -4,7 +4,6 @@ KNOWN ISSUES:
  - newsapi.get_everything() will sometimes give invalid URLs (<removed>).
 """
 
-import os
 import time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -15,9 +14,7 @@ from newsapi import NewsApiClient
 from newspaper import Article
 
 import cache
-
-# Repo root = parent of the directory this file lives in (app/).
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import config
 
 # Many sites 403 a request with no/identifiable bot User-Agent, so present a
 # normal browser UA. This recovers a lot of the articles that used to fail.
@@ -55,21 +52,11 @@ _STOPWORDS = {
     "need", "needs", "want", "which", "real", "really", "plus", "also", "here",
     "there", "now", "then", "get", "got", "make", "made", "take", "like", "just",
     "back", "still", "best", "top", "big", "one", "two", "day", "days", "year",
-    "years", "time", "week", "these", "those", "some", "many", "much", "very",
+    "years", "time", "week", "some", "many", "much", "very",
 }
 
 
-def _load_key(env_var: str, file_name: str) -> str:
-    """Read an API key from an env var, falling back to a key file at the repo root."""
-    key = os.environ.get(env_var)
-    if key:
-        return key.strip()
-    key_path = os.path.join(ROOT_DIR, file_name)
-    with open(key_path, "r") as f:
-        return f.readline().strip()
-
-
-newsapi = NewsApiClient(api_key=_load_key("NEWSAPI_KEY", "newsapi_key.txt"))
+newsapi = NewsApiClient(api_key=config.load_key("NEWSAPI_KEY", "newsapi_key.txt"))
 
 
 class Scraper:
