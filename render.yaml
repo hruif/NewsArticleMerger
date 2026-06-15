@@ -1,0 +1,24 @@
+# Render blueprint (https://render.com). Create a new "Blueprint" from this repo,
+# then set NEWSDATA_KEY and GEMINI_API_KEY as secrets in the dashboard.
+services:
+  - type: web
+    name: news-article-merger
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # gthread workers (not sync) so a streaming SSE response holds a thread, not
+    # the whole worker. 1 worker keeps memory low on the free tier; 8 threads
+    # allow several concurrent streams. --timeout covers the slowest generation.
+    startCommand: >-
+      gunicorn --chdir app
+      --worker-class gthread --workers 1 --threads 8 --timeout 120
+      --bind 0.0.0.0:$PORT app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: TOPICS_CACHE_TTL
+        value: "3600"
+      - key: NEWSDATA_KEY
+        sync: false        # set in the Render dashboard (secret)
+      - key: GEMINI_API_KEY
+        sync: false        # set in the Render dashboard (secret)

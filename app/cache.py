@@ -6,7 +6,8 @@ import tempfile
 
 import config
 
-CACHE_DIR = os.path.join(config.ROOT_DIR, "cache")
+# Defaults to <repo>/cache; override with CACHE_DIR (e.g. a mounted disk in prod).
+CACHE_DIR = os.environ.get("CACHE_DIR") or os.path.join(config.ROOT_DIR, "cache")
 
 
 def load(name: str, default=None):

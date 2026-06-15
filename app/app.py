@@ -1,4 +1,5 @@
 import json
+import os
 import time
 
 import nh3
@@ -100,8 +101,8 @@ def api_article_stream():
                 )
                 return
 
-            # We own the source links (from NewsAPI), so render them from trusted
-            # metadata rather than anything the model emits.
+            # We own the source links (from newsdata.io), so render them from
+            # trusted metadata rather than anything the model emits.
             sources_meta = [
                 {"id": i + 1, "title": s["title"], "url": s["url"], "name": s["name"]}
                 for i, s in enumerate(sources)
@@ -138,4 +139,12 @@ def api_article_stream():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, threaded=True)
+    # Local dev server only. In production the app is served by gunicorn (see
+    # render.yaml). Debug is off unless FLASK_DEBUG=1 to avoid exposing the
+    # interactive debugger.
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "5000")),
+        debug=os.environ.get("FLASK_DEBUG") == "1",
+        threaded=True,
+    )

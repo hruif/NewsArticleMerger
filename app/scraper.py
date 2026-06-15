@@ -1,16 +1,22 @@
 """
+News discovery via newsdata.io (https://newsdata.io). We use it only to find
+article URLs (+ title/source); the full text is scraped ourselves with newspaper.
+
 KNOWN ISSUES:
  - scrape() will throw errors on some URLs/domains; those articles are skipped.
- - newsapi.get_everything() will sometimes give invalid URLs (<removed>).
+ - newsdata.io's free tier only covers roughly the last 48 hours.
+
+API CREDITS (free tier = 200/day): a search is 1 credit; a trending sweep is one
+credit per category (see _HEADLINE_CATEGORIES), cached for TOPICS_CACHE_TTL.
 """
 
+import os
 import time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 import requests
-from newsapi import NewsApiClient
 from newspaper import Article
 
 import cache
@@ -28,14 +34,19 @@ HEADERS = {
 SCRAPE_TIMEOUT = 8  # seconds per article
 MAX_WORKERS = 10
 
+NEWSDATA_URL = "https://newsdata.io/api/1/latest"
+NEWSDATA_KEY = config.load_key("NEWSDATA_KEY", "newsdata_key.txt")
+
 # Trending-topics tuning. Sweeping categories builds a pool large enough that the
-# same story shows up from many outlets; results are cached to avoid re-spending
-# API quota (one sweep == several requests) on every homepage load.
-_HEADLINE_CATEGORIES = (
-    "general", "business", "technology", "science", "health", "sports", "entertainment",
+# same story shows up from many outlets. Each category costs one API credit, so
+# both the category list and the cache TTL are env-tunable to fit the daily budget.
+_HEADLINE_CATEGORIES = tuple(
+    c.strip() for c in os.environ.get(
+        "TOPICS_CATEGORIES", "business,technology,science,health,world"
+    ).split(",") if c.strip()
 )
 _MIN_TOPIC_SOURCES = 2  # a "topic" must be covered by at least this many outlets
-_TOPICS_CACHE_TTL = 900  # seconds (15 min) before an automatic re-sweep
+_TOPICS_CACHE_TTL = int(os.environ.get("TOPICS_CACHE_TTL", "3600"))  # 60 min default
 _TOPICS_CACHE_FILE = "topics.json"
 _topics_cache = {"at": 0.0, "topics": []}
 
@@ -56,7 +67,25 @@ _STOPWORDS = {
 }
 
 
-newsapi = NewsApiClient(api_key=config.load_key("NEWSAPI_KEY", "newsapi_key.txt"))
+def _newsdata_latest(**params):
+    """Call newsdata.io /latest and return its list of article results."""
+    params["apikey"] = NEWSDATA_KEY
+    params.setdefault("language", "en")
+    response = requests.get(NEWSDATA_URL, params=params, timeout=10)
+    response.raise_for_status()
+    data = response.json()
+    if data.get("status") != "success":
+        return []
+    return data.get("results", [])
+
+
+def _to_internal(article):
+    """Normalize a newsdata.io article to the shape the rest of this module uses."""
+    return {
+        "title": article.get("title"),
+        "url": article.get("link"),
+        "source": {"name": article.get("source_name") or article.get("source_id") or "Unknown"},
+    }
 
 
 class Scraper:
@@ -64,23 +93,21 @@ class Scraper:
         """
         Get a diverse set of articles (with metadata) for a query.
 
-        Over-fetches a candidate pool, orders it so different news sources come
-        first (for a wide range of perspectives), scrapes candidates in parallel,
-        and returns the first `num_articles` that scrape successfully.
+        Searches newsdata.io (one credit), orders results so different news sources
+        come first (for a wide range of perspectives), scrapes candidates in
+        parallel, and returns the first `num_articles` that scrape successfully.
 
         :param string query: Query to search for.
         :param int num_articles: Number of articles to include.
         :return: List of dicts: {"title", "url", "name" (source), "text"}.
         """
-        # Pull a generous pool so 403s / dead URLs don't starve the result set.
-        pool_size = min(max(num_articles * 6, 30), 100)
-        response = newsapi.get_everything(
-            q=query, sort_by="relevancy", language="en", page_size=pool_size, page=1
-        )
-        if response.get("status") != "ok":
+        try:
+            results = _newsdata_latest(q=query)
+        except Exception as e:
+            print(f"newsdata search failed for {query!r}: {e}")
             return []
 
-        candidates = self._order_by_diversity(response.get("articles", []))
+        candidates = self._order_by_diversity([_to_internal(a) for a in results])
         # Only attempt a bounded number of scrapes (enough to cover failures).
         candidates = candidates[: num_articles * 2]
 
@@ -146,19 +173,16 @@ class Scraper:
         pool, seen = [], set()
         for category in _HEADLINE_CATEGORIES:
             try:
-                response = newsapi.get_top_headlines(
-                    language="en", country="us", category=category, page_size=100
-                )
+                results = _newsdata_latest(category=category, country="us")
             except Exception as e:
-                print(f"top_headlines ({category}) failed: {e}")
+                print(f"newsdata category ({category}) failed: {e}")
                 continue
-            if response.get("status") != "ok":
-                continue
-            for article in response.get("articles", []):
-                url = article.get("url")
+            for article in results:
+                internal = _to_internal(article)
+                url = internal["url"]
                 if url and url not in seen:
                     seen.add(url)
-                    pool.append(article)
+                    pool.append(internal)
         return pool
 
     def _cluster_topics(self, articles):
@@ -168,7 +192,7 @@ class Scraper:
             title = article.get("title")
             if not title:
                 continue
-            # NewsAPI titles often end with " - <Source>"; trim for a clean topic.
+            # Some titles end with " - <Source>"; trim for a clean topic.
             clean = title.rsplit(" - ", 1)[0].strip()
             keywords = self._keywords(clean)
             if len(keywords) < 2:
@@ -235,7 +259,7 @@ class Scraper:
         by_domain = OrderedDict()
         for article in articles:
             url = article.get("url")
-            if not url or url == "https://removed.com":
+            if not url:
                 continue
             domain = urlparse(url).netloc.lower().removeprefix("www.")
             by_domain.setdefault(domain, []).append(article)
