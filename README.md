@@ -1,3 +1,13 @@
+---
+title: News Article Merger
+emoji: 📰
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # News Article Merger
 
 A small Flask web app that takes a topic, pulls several news articles about it
@@ -111,22 +121,38 @@ cache entirely, delete the `cache/` directory.
 > That's fine here — entries simply regenerate. Point `CACHE_DIR` at a mounted
 > disk if you want it to persist.
 
-## Deploy (Render)
+## Deploy
 
-This repo includes a [`render.yaml`](render.yaml) blueprint.
+The app is a standard gunicorn web service, so it runs on most hosts. Two recipes:
 
-1. Push the repo to GitHub.
-2. In [Render](https://render.com), create a new **Blueprint** from the repo.
-3. Set the two secrets in the dashboard: `NEWSDATA_KEY` and `GEMINI_API_KEY`.
-4. Deploy. Render builds with `pip install -r requirements.txt` and serves with
-   gunicorn (gthread workers, so streaming/SSE works).
+### Hugging Face Spaces (free, no credit card)
 
-Notes:
-- The **free** instance sleeps after ~15 min idle and cold-starts (~30–60s) on
-  the next visit.
-- Mind the **newsdata.io budget (200 credits/day)**: a search costs 1 credit and a
-  trending sweep costs 1 credit per category in `TOPICS_CATEGORIES`. Raise
-  `TOPICS_CACHE_TTL` or trim `TOPICS_CATEGORIES` to conserve credits.
+This repo includes a [`Dockerfile`](Dockerfile) and the Space config (the YAML at
+the top of this README — `sdk: docker`, `app_port: 7860`).
+
+1. Create a free account at [huggingface.co](https://huggingface.co).
+2. **New Space** → SDK **Docker** → **Blank** → name it (e.g. `news-article-merger`).
+3. In the Space's **Settings → Variables and secrets**, add secrets `NEWSDATA_KEY`
+   and `GEMINI_API_KEY`.
+4. Push this code to the Space's git repo (auth with your HF username + a write
+   token from <https://huggingface.co/settings/tokens>):
+   ```bash
+   git remote add space https://huggingface.co/spaces/<your-username>/news-article-merger
+   git push space main
+   ```
+   The Space builds the Dockerfile and serves at `https://<user>-news-article-merger.hf.space`.
+
+### Render
+
+A [`render.yaml`](render.yaml) blueprint is also included. Note: the *Blueprint*
+flow currently asks for a card — create a plain **Web Service** instead (Build:
+`pip install -r requirements.txt`; Start: the gunicorn command from the local-run
+section but with `--bind 0.0.0.0:$PORT`), and set the two secrets. The free
+instance sleeps after ~15 min idle and cold-starts on the next visit.
+
+> **Budget:** mind the **newsdata.io free limit (200 credits/day)** — a search is 1
+> credit and a trending sweep is 1 credit per category in `TOPICS_CATEGORIES`.
+> Raise `TOPICS_CACHE_TTL` or trim `TOPICS_CATEGORIES` to conserve credits.
 
 ## Notes
 

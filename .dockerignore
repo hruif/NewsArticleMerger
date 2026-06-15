@@ -1,0 +1,12 @@
+.git/
+venv/
+cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+.claude/
+# Never bake API key files into the image (keys come from Space secrets).
+*.txt
+!requirements.txt
