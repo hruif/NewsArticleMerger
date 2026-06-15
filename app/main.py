@@ -1,9 +1,8 @@
-"""Pipeline glue: query -> scrape diverse articles -> merge into one HTML article.
+"""Pipeline glue: query -> scrape diverse sources -> stream a merged article.
 
-Holds the single Scraper/Merger instances and the per-query article cache.
+Holds the single Scraper/Merger instances and the per-query article cache. The
+streaming orchestration itself lives in app.py (it is tied to SSE + sanitization).
 """
-
-import time
 
 import cache
 from merger import Merger
@@ -21,36 +20,41 @@ def get_topics(count: int = 5, refresh: bool = False):
     return scrpr.get_trending_topics(count, refresh=refresh)
 
 
-def _result(html, cached, created_at):
-    return {"html": html, "cached": cached, "created_at": created_at}
+def get_sources(query: str):
+    """Scrape a diverse set of source articles for a query."""
+    return scrpr.get_articles(query, NUM_ARTICLES)
 
 
-def get_article(query: str, refresh: bool = False):
+def _normalize(query: str) -> str:
+    return " ".join(query.lower().split())
+
+
+def get_cached(query: str):
+    """Return the cached structured article for a query, or None.
+
+    Legacy entries (pre-citation format, which only had an 'html' field) are
+    treated as a miss so they get regenerated in the new shape.
     """
-    Build (or load from cache) a merged article for `query`.
-    :return: dict with 'html', 'cached' (bool), and 'created_at' (epoch or None).
-    """
-    if not query:
-        return _result("<p>Please enter a search term.</p>", False, None)
+    entry = cache.load(ARTICLES_CACHE, {}).get(_normalize(query))
+    if entry and "article_html" in entry:
+        return entry
+    return None
 
-    key = " ".join(query.lower().split())
+
+def save_article(query: str, result: dict) -> None:
+    """Persist a structured article result keyed by normalized query."""
     store = cache.load(ARTICLES_CACHE, {})
-
-    if not refresh and key in store:
-        entry = store[key]
-        return _result(entry["html"], True, entry["created_at"])
-
-    # get text from a diverse set of articles, then merge into one HTML article
-    articles_text = scrpr.get_articles(query, NUM_ARTICLES)
-    if not articles_text:
-        return _result(
-            "<p>No articles could be retrieved for that query. Try another search.</p>",
-            False,
-            None,
-        )
-
-    html = mrgr.merge_texts(articles_text)
-    created_at = time.time()
-    store[key] = {"query": query, "html": html, "created_at": created_at}
+    store[_normalize(query)] = result
     cache.save(ARTICLES_CACHE, store)
-    return _result(html, False, created_at)
+
+
+def list_recent(limit: int = 30):
+    """Recently generated articles, newest first: [{query, created_at}]."""
+    store = cache.load(ARTICLES_CACHE, {})
+    items = [
+        {"query": e.get("query", k), "created_at": e.get("created_at", 0)}
+        for k, e in store.items()
+        if "article_html" in e
+    ]
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return items[:limit]

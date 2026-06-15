@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Results</title>
     <style>
-        body { font-family: system-ui, sans-serif; line-height: 1.6; }
+        body { font-family: system-ui, sans-serif; line-height: 1.6; color: #222; }
         .article { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-        button { padding: .5rem 1rem; font-size: 1rem; cursor: pointer; margin-top: 1.5rem; }
+        button { padding: .4rem .8rem; font-size: .9rem; cursor: pointer; }
         #meta { color: #777; font-size: .85rem; margin-bottom: 1rem; }
-        #meta a { color: #1a4fce; }
+        #controls { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1rem 0; }
         #loading { text-align: center; color: #555; margin: 3rem 0; }
         .spinner {
             width: 40px; height: 40px; margin: 1rem auto;
@@ -17,6 +17,43 @@
             animation: spin 0.9s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* TL;DR + sources */
+        .tldr { background: #f4f7ff; border: 1px solid #dce6ff; border-radius: 8px; padding: .5rem 1rem; }
+        .tldr h2 { margin: .5rem 0; font-size: 1rem; }
+        .tldr li { cursor: pointer; }
+        .tldr li:hover { text-decoration: underline; }
+        ol.sources li { margin: .3rem 0; }
+        ol.sources a { color: #1a4fce; }
+        .hint { color: #777; font-size: .85rem; margin: .2rem 0 .8rem; }
+        .persp-card { border: 1px solid #eee; border-left: 3px solid #e0a800; border-radius: 6px; padding: .5rem .8rem; margin: .6rem 0; }
+        .persp-card h4 { margin: .2rem 0 .4rem; font-size: .95rem; }
+        .persp-card .view { margin: .25rem 0; font-size: .9rem; }
+        .persp-card .view b { color: #1a4fce; }
+        .persp-card .goto { margin-top: .4rem; font-size: .8rem; }
+
+        /* citation + perspective markers */
+        sup.cite { color: #1a4fce; cursor: pointer; font-weight: 600; }
+        sup.cite::before { content: "["; }
+        sup.cite::after { content: "]"; }
+        mark.persp { background: #fff3bf; border-bottom: 2px dotted #e0a800; cursor: help; padding: 0 1px; }
+        .flash { animation: flash 1.2s ease-out; }
+        @keyframes flash { from { background: #ffe9a8; } to { background: transparent; } }
+
+        /* perspective popover */
+        #popover {
+            position: absolute; max-width: 320px; background: #fff; border: 1px solid #ccc;
+            border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: .6rem .8rem;
+            font-size: .85rem; z-index: 10; display: none;
+        }
+        #popover h4 { margin: 0 0 .3rem; font-size: .85rem; }
+        #popover .view { margin: .3rem 0; }
+        #popover .view b { color: #1a4fce; }
+
+        @media print {
+            #controls, #meta, #loading, .back { display: none !important; }
+            body { color: #000; }
+        }
     </style>
 </head>
 <body>
@@ -25,47 +62,241 @@
 
         <div id="loading">
             <div class="spinner"></div>
-            <p>Gathering articles and merging them… this can take a few seconds.</p>
+            <p>Gathering articles and writing the merged story…</p>
         </div>
 
-        <div id="meta" hidden>
-            <span id="meta-text"></span><a id="refresh-link" href="#">Refresh</a>
-        </div>
+        <div id="meta" hidden></div>
+        <div id="tldr" class="tldr" hidden></div>
         <div id="article"></div>
-        <button onclick="window.location.href='/'">Back to Search</button>
+
+        <div id="perspectives-wrap" hidden>
+            <h2>Differing perspectives</h2>
+            <p class="hint" id="persp-hint"></p>
+            <div id="perspectives"></div>
+        </div>
+
+        <div id="sources-wrap" hidden>
+            <h2>Sources</h2>
+            <ol id="sources" class="sources"></ol>
+        </div>
+
+        <div id="controls" hidden>
+            <button id="copy-btn">Copy as Markdown</button>
+            <button id="print-btn">Print / Save PDF</button>
+            <button id="link-btn">Copy link</button>
+        </div>
+        <button class="back" onclick="window.location.href='/'">Back to Search</button>
     </div>
+
+    <div id="popover"></div>
 
     <script>
         const query = {{ query | tojson }};
         const isRefresh = new URLSearchParams(window.location.search).get('refresh') === '1';
-        const apiUrl = '/api/article?query=' + encodeURIComponent(query) + (isRefresh ? '&refresh=1' : '');
+        const el = (id) => document.getElementById(id);
+        let current = null;          // latest done payload (for export)
+        let finished = false;        // guards against EventSource auto-reconnect
+        let sourceNameMap = {};      // source id -> outlet name
 
-        // Refresh re-runs the pipeline (bypasses the cache) for this query.
-        const refreshLink = document.getElementById('refresh-link');
-        refreshLink.href = '/results?query=' + encodeURIComponent(query) + '&refresh=1';
+        const streamUrl = '/api/article/stream?query=' + encodeURIComponent(query) +
+            (isRefresh ? '&refresh=1' : '');
+        const es = new EventSource(streamUrl);
 
-        fetch(apiUrl)
-            .then(response => {
-                if (!response.ok) throw new Error('Request failed');
-                return response.json();
-            })
-            .then(data => {
-                document.getElementById('loading').style.display = 'none';
-                // data.html is sanitized server-side with nh3 before it is sent.
-                document.getElementById('article').innerHTML = data.html;
+        // Article streams in; data.html is already sanitized server-side.
+        es.addEventListener('delta', (e) => {
+            el('loading').style.display = 'none';
+            el('article').innerHTML = JSON.parse(e.data).html;
+        });
 
-                let label = data.cached ? 'Loaded from cache' : 'Freshly generated';
-                if (data.created_at) {
-                    label += ' · ' + new Date(data.created_at * 1000).toLocaleString();
-                }
-                // textContent (not innerHTML) keeps the query/text inert.
-                document.getElementById('meta-text').textContent = label + ' · ';
-                document.getElementById('meta').hidden = false;
-            })
-            .catch(() => {
-                document.getElementById('loading').innerHTML =
-                    '<p>Something went wrong while building the article. Please try again.</p>';
+        es.addEventListener('done', (e) => {
+            finished = true; es.close();
+            current = JSON.parse(e.data);
+            el('loading').style.display = 'none';
+            el('article').innerHTML = current.article_html;
+            sourceNameMap = {};
+            (current.sources || []).forEach((s) => { sourceNameMap[s.id] = s.name; });
+            renderTldr(current.tldr);
+            renderSources(current.sources);
+            wirePerspectives(current.perspectives);   // inline hover (when marks exist)
+            renderPerspectives(current.perspectives); // always-on panel
+            wireCitations();
+            renderMeta(current);
+            el('controls').hidden = false;
+        });
+
+        es.addEventListener('error', (e) => {
+            finished = true; es.close();
+            el('loading').innerHTML = '<p>Something went wrong while building the article. Please try again.</p>';
+            el('loading').style.display = 'block';
+        });
+
+        // If the connection drops before we finished, surface it (and stop retrying).
+        es.onerror = () => {
+            if (finished) return;
+            finished = true; es.close();
+            el('loading').innerHTML = '<p>Connection lost while building the article. Please try again.</p>';
+        };
+
+        function renderMeta(d) {
+            let label = d.cached ? 'Loaded from cache' : 'Freshly generated';
+            if (d.created_at) label += ' · ' + new Date(d.created_at * 1000).toLocaleString();
+            const m = el('meta');
+            m.textContent = label + ' · ';
+            const a = document.createElement('a');
+            a.href = '/results?query=' + encodeURIComponent(query) + '&refresh=1';
+            a.textContent = 'Refresh';
+            m.appendChild(a);
+            m.hidden = false;
+        }
+
+        function renderTldr(items) {
+            if (!items || !items.length) return;
+            const box = el('tldr');
+            box.innerHTML = '<h2>TL;DR</h2>';
+            const ul = document.createElement('ul');
+            items.forEach((it) => {
+                const li = document.createElement('li');
+                li.textContent = it.text;                 // textContent = inert
+                if (it.anchor) li.onclick = () => scrollToFlash(el('article').querySelector('#' + cssId(it.anchor)));
+                ul.appendChild(li);
             });
+            box.appendChild(ul);
+            box.hidden = false;
+        }
+
+        function renderSources(sources) {
+            if (!sources || !sources.length) return;
+            const ol = el('sources');
+            sources.forEach((s) => {
+                const li = document.createElement('li');
+                li.id = 'src-' + s.id;
+                const a = document.createElement('a');
+                a.href = s.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+                a.textContent = (s.title || 'Untitled') + ' — ' + (s.name || '');
+                li.appendChild(a);
+                ol.appendChild(li);
+            });
+            el('sources-wrap').hidden = false;
+        }
+
+        function wireCitations() {
+            el('article').querySelectorAll('sup.cite').forEach((sup) => {
+                sup.onclick = () => scrollToFlash(el('src-' + sup.dataset.src));
+            });
+        }
+
+        // Build a view list (Source name: stance) into a container, via textContent.
+        function appendViews(container, views) {
+            (views || []).forEach((v) => {
+                const div = document.createElement('div');
+                div.className = 'view';
+                const b = document.createElement('b');
+                b.textContent = (sourceNameMap[v.source] || ('Source ' + v.source)) + ': ';
+                div.appendChild(b);
+                div.appendChild(document.createTextNode(v.stance || ''));
+                container.appendChild(div);
+            });
+        }
+
+        // Inline hover popovers on any <mark> the model emitted (best-effort).
+        function wirePerspectives(perspectives) {
+            const byId = {};
+            (perspectives || []).forEach((p) => { byId[p.id] = p; });
+            const pop = el('popover');
+            el('article').querySelectorAll('mark.persp').forEach((mark) => {
+                const p = byId[mark.dataset.persp];
+                if (!p) return;
+                const show = () => {
+                    pop.innerHTML = '';
+                    const h = document.createElement('h4');
+                    h.textContent = p.summary || 'Differing perspectives';
+                    pop.appendChild(h);
+                    appendViews(pop, p.views);
+                    const r = mark.getBoundingClientRect();
+                    pop.style.top = (window.scrollY + r.bottom + 6) + 'px';
+                    pop.style.left = (window.scrollX + r.left) + 'px';
+                    pop.style.display = 'block';
+                };
+                mark.addEventListener('mouseenter', show);
+                mark.addEventListener('click', show);
+                mark.addEventListener('mouseleave', () => { pop.style.display = 'none'; });
+            });
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') pop.style.display = 'none'; });
+        }
+
+        // Always-on panel listing every perspective (reliable even without marks).
+        function renderPerspectives(perspectives) {
+            if (!perspectives || !perspectives.length) return;
+            const marks = {};
+            el('article').querySelectorAll('mark.persp').forEach((m) => { marks[m.dataset.persp] = m; });
+            el('persp-hint').textContent = Object.keys(marks).length
+                ? 'Highlighted phrases above are contested — hover them, or read the breakdown here.'
+                : 'Where the sources disagree or frame things differently:';
+            const wrap = el('perspectives');
+            perspectives.forEach((p) => {
+                const card = document.createElement('div');
+                card.className = 'persp-card';
+                const h = document.createElement('h4');
+                h.textContent = p.summary || 'Differing perspectives';
+                card.appendChild(h);
+                appendViews(card, p.views);
+                if (marks[p.id]) {
+                    const btn = document.createElement('button');
+                    btn.className = 'goto';
+                    btn.textContent = 'Find in article';
+                    btn.onclick = () => scrollToFlash(marks[p.id]);
+                    card.appendChild(btn);
+                }
+                wrap.appendChild(card);
+            });
+            el('perspectives-wrap').hidden = false;
+        }
+
+        function scrollToFlash(node) {
+            if (!node) return;
+            node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash');
+        }
+
+        // CSS.escape fallback for ids that begin with a digit etc.
+        function cssId(id) { return (window.CSS && CSS.escape) ? CSS.escape(id) : id; }
+
+        // --- Export ---
+        el('print-btn').onclick = () => window.print();
+        el('link-btn').onclick = () => {
+            const url = location.origin + location.pathname + '?query=' + encodeURIComponent(query);
+            navigator.clipboard.writeText(url).then(() => flashBtn('link-btn', 'Link copied!'));
+        };
+        el('copy-btn').onclick = () => {
+            navigator.clipboard.writeText(toMarkdown()).then(() => flashBtn('copy-btn', 'Copied!'));
+        };
+
+        function flashBtn(id, msg) {
+            const b = el(id); const old = b.textContent;
+            b.textContent = msg; setTimeout(() => { b.textContent = old; }, 1500);
+        }
+
+        // Lightweight HTML -> Markdown of the current article (no dependencies).
+        function toMarkdown() {
+            if (!current) return '';
+            let md = '# ' + query + '\n\n';
+            if (current.tldr && current.tldr.length) {
+                md += '## TL;DR\n' + current.tldr.map((t) => '- ' + t.text).join('\n') + '\n\n';
+            }
+            el('article').childNodes.forEach((n) => {
+                if (n.nodeType !== 1) return;
+                const tag = n.tagName.toLowerCase();
+                const text = n.textContent.trim();
+                if (!text) return;
+                if (tag.match(/^h[1-6]$/)) md += '## ' + text + '\n\n';
+                else md += text + '\n\n';
+            });
+            if (current.sources && current.sources.length) {
+                md += '## Sources\n' + current.sources
+                    .map((s) => `${s.id}. [${s.title} — ${s.name}](${s.url})`).join('\n') + '\n';
+            }
+            return md;
+        }
     </script>
 </body>
 </html>

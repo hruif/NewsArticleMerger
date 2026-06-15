@@ -16,10 +16,13 @@
         .source { color: #777; font-size: .85rem; }
         h2 { margin-top: 2rem; display: inline-block; margin-right: .75rem; }
         .refresh { font-size: .85rem; color: #1a4fce; }
+        .nav { font-size: .9rem; }
+        .nav a { color: #1a4fce; }
     </style>
 </head>
 <body>
     <h1>News Article Merger</h1>
+    <p class="nav"><a href="/recent">Recent articles →</a></p>
     <form action="/results" method="GET">
         <label for="query" hidden>Enter your search:</label>
         <input type="text" id="query" name="query" placeholder="Search any topic…" required>

@@ -62,15 +62,15 @@ newsapi = NewsApiClient(api_key=config.load_key("NEWSAPI_KEY", "newsapi_key.txt"
 class Scraper:
     def get_articles(self, query: str, num_articles: int):
         """
-        Get text from a diverse set of articles for a query.
+        Get a diverse set of articles (with metadata) for a query.
 
         Over-fetches a candidate pool, orders it so different news sources come
         first (for a wide range of perspectives), scrapes candidates in parallel,
-        and returns the text of the first `num_articles` that scrape successfully.
+        and returns the first `num_articles` that scrape successfully.
 
         :param string query: Query to search for.
         :param int num_articles: Number of articles to include.
-        :return: List of strings containing article texts.
+        :return: List of dicts: {"title", "url", "name" (source), "text"}.
         """
         # Pull a generous pool so 403s / dead URLs don't starve the result set.
         pool_size = min(max(num_articles * 6, 30), 100)
@@ -83,13 +83,26 @@ class Scraper:
         candidates = self._order_by_diversity(response.get("articles", []))
         # Only attempt a bounded number of scrapes (enough to cover failures).
         candidates = candidates[: num_articles * 2]
-        urls = [a["url"] for a in candidates]
 
+        # Scrape in parallel; keep each candidate paired with its scraped text.
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            texts = list(executor.map(self.scrape, urls))
+            texts = list(executor.map(lambda a: self.scrape(a["url"]), candidates))
 
-        # Keep successes in diversity order, up to the requested count.
-        return [t for t in texts if t][:num_articles]
+        articles = []
+        for candidate, text in zip(candidates, texts):
+            if not text:
+                continue
+            articles.append(
+                {
+                    "title": candidate.get("title") or "Untitled",
+                    "url": candidate.get("url"),
+                    "name": (candidate.get("source") or {}).get("name") or "Unknown",
+                    "text": text,
+                }
+            )
+            if len(articles) >= num_articles:
+                break
+        return articles
 
     def get_trending_topics(self, count: int = 5, refresh: bool = False):
         """

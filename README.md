@@ -7,17 +7,27 @@ article that cross-references the sources and presents multiple perspectives.
 The homepage also surfaces **trending topics** — stories currently being covered
 by the most distinct news sources — that you can click to read a merged write-up.
 
+The merged article **streams in live** as Gemini writes it, with:
+
+- **Inline citations** linking claims to a numbered **Sources** list
+- **Hover-perspectives** — contested points are highlighted; hover to see how the
+  sources differ
+- a **TL;DR** whose items jump to the relevant section
+- **export**: copy as Markdown, print / save as PDF, or copy a shareable link
+- a **Recent articles** page backed by the on-disk cache
+
 ## How it works
 
 ```
 query ─▶ NewsAPI (find articles) ─▶ newspaper3k (scrape text, in parallel)
-      ─▶ Gemini (merge into one HTML article) ─▶ browser
+      ─▶ Gemini (stream a merged HTML article) ─▶ browser (Server-Sent Events)
 ```
 
-- `app/app.py` — Flask routes (search page, results loading screen, JSON API)
+- `app/app.py` — Flask routes (search, results, `/recent`, SSE article stream)
 - `app/main.py` — pipeline glue + per-query article cache
 - `app/scraper.py` — NewsAPI search, parallel scraping, trending-topic detection
-- `app/merger.py` — Gemini merge call
+- `app/merger.py` — Gemini streaming merge (article + citation/perspective markers)
+- `app/cache.py` / `app/config.py` — JSON file cache + shared paths/key loading
 - `app/cache.py` — JSON file cache (survives restarts)
 - `app/config.py` — shared paths + API-key loading
 
@@ -63,8 +73,9 @@ python app.py
 
 Then open <http://127.0.0.1:5000/>.
 
-Search any topic, or click a trending topic. The results page shows a loading
-spinner while it scrapes and merges (typically under ~15 seconds).
+Search any topic, or click a trending topic. The article streams in as it is
+generated (typically a few seconds), then the TL;DR, citations, sources, and
+hover-perspectives become interactive.
 
 ## Configuration
 
@@ -85,6 +96,10 @@ Results are cached on disk under `cache/` (git-ignored):
 Both have a **Refresh** link in the UI to force a fresh result. To clear the
 cache entirely, delete the `cache/` directory.
 
+> **Note:** the cached article format changed when citations/perspectives were
+> added. Old `articles.json` entries are ignored (regenerated on next search), so
+> you can simply delete `cache/articles.json` after upgrading.
+
 ## Notes
 
 - The trending-topic sweep is hardcoded to US headlines and costs several
@@ -92,3 +107,11 @@ cache entirely, delete the `cache/` directory.
   matters.
 - `debug=True` in `app.py` is convenient for local development but should be
   turned off if you ever expose this beyond localhost.
+
+## Future ideas
+
+- **Search controls** — let the user tune the query: date range, recency vs.
+  relevancy sort, number of articles, region/language. Deliberately left out for
+  now to keep the UI simple; NewsAPI already supports all of these, so it can be
+  added later if needed.
+- Cache eviction (TTL / size cap) for the per-query article cache.
