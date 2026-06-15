@@ -8,6 +8,7 @@
         body { font-family: system-ui, sans-serif; line-height: 1.6; color: #222; }
         .article { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
         button { padding: .4rem .8rem; font-size: .9rem; cursor: pointer; }
+        .back-top { margin-bottom: 1rem; }
         #meta { color: #777; font-size: .85rem; margin-bottom: 1rem; }
         #controls { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1rem 0; }
         #loading { text-align: center; color: #555; margin: 3rem 0; }
@@ -58,6 +59,7 @@
 </head>
 <body>
     <div class="article">
+        <button class="back back-top" onclick="window.location.href='/'">← Back to Search</button>
         <h1>Results for: {{ query }}</h1>
 
         <div id="loading">
@@ -85,7 +87,7 @@
             <button id="print-btn">Print / Save PDF</button>
             <button id="link-btn">Copy link</button>
         </div>
-        <button class="back" onclick="window.location.href='/'">Back to Search</button>
+        <button class="back" onclick="window.location.href='/'">← Back to Search</button>
     </div>
 
     <div id="popover"></div>
