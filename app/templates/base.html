@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="One story, merged from many sources — a news reader that synthesizes multiple articles into a single cross-referenced piece.">
+    <title>{% block title %}News Article Merger{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="wrap">
+        <header class="masthead">
+            <a class="title" href="/">News Article Merger</a>
+            <div class="tagline">One story, merged from many sources</div>
+            <nav class="nav"><a href="/">Search</a> · <a href="/recent">Recent</a></nav>
+        </header>
+
+        {% block content %}{% endblock %}
+
+        <footer class="footer">Built with newsdata.io &amp; Google Gemini</footer>
+    </div>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

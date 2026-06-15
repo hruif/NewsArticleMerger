@@ -1,42 +1,30 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Recent articles</title>
-    <style>
-        body { font-family: system-ui, sans-serif; line-height: 1.6; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-        ul { list-style: none; padding: 0; }
-        li { margin: .5rem 0; }
-        a { color: #1a4fce; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        .when { color: #777; font-size: .85rem; }
-        .nav { font-size: .9rem; }
-    </style>
-</head>
-<body>
-    <h1>Recent articles</h1>
-    <p class="nav"><a href="/">← Back to search</a></p>
+{% extends "base.html" %}
 
-    {% if items %}
-    <ul>
-        {% for item in items %}
-        <li>
-            <a href="/results?query={{ item.query | urlencode }}">{{ item.query }}</a>
-            <span class="when" data-ts="{{ item.created_at }}"></span>
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p>No articles yet. Search for something to get started.</p>
-    {% endif %}
+{% block title %}Recent · News Article Merger{% endblock %}
 
-    <script>
-        // Render cache timestamps in the visitor's local time.
-        document.querySelectorAll('.when').forEach((s) => {
-            const ts = parseFloat(s.dataset.ts);
-            if (ts) s.textContent = ' · ' + new Date(ts * 1000).toLocaleString();
-        });
-    </script>
-</body>
-</html>
+{% block content %}
+<div class="section-label"><span>Recent articles</span></div>
+
+{% if items %}
+<ul class="topics">
+    {% for item in items %}
+    <li>
+        <a href="/results?query={{ item.query | urlencode }}">{{ item.query }}</a>
+        <span class="src when" data-ts="{{ item.created_at }}"></span>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p>No articles yet. Search for something to get started.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Render cache timestamps in the visitor's local time.
+    document.querySelectorAll('.when').forEach((s) => {
+        const ts = parseFloat(s.dataset.ts);
+        if (ts) s.textContent = new Date(ts * 1000).toLocaleString();
+    });
+</script>
+{% endblock %}
