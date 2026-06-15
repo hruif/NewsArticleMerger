@@ -11,6 +11,7 @@ credit per category (see _HEADLINE_CATEGORIES), cached for TOPICS_CACHE_TTL.
 """
 
 import os
+import re
 import time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -38,17 +39,37 @@ NEWSDATA_URL = "https://newsdata.io/api/1/latest"
 NEWSDATA_KEY = config.load_key("NEWSDATA_KEY", "newsdata_key.txt")
 
 # Trending-topics tuning. Sweeping categories builds a pool large enough that the
-# same story shows up from many outlets. Each category costs one API credit, so
-# both the category list and the cache TTL are env-tunable to fit the daily budget.
+# same story shows up from many outlets. Lead with hard-news categories so the
+# raw pool skews substantive; the model then curates it (see _curate). Each
+# category costs one API credit, so the list and cache TTL are env-tunable.
 _HEADLINE_CATEGORIES = tuple(
     c.strip() for c in os.environ.get(
-        "TOPICS_CATEGORIES", "business,technology,science,health,world"
+        "TOPICS_CATEGORIES", "top,world,politics,business,science"
     ).split(",") if c.strip()
 )
 _MIN_TOPIC_SOURCES = 2  # a "topic" must be covered by at least this many outlets
 _TOPICS_CACHE_TTL = int(os.environ.get("TOPICS_CACHE_TTL", "3600"))  # 60 min default
 _TOPICS_CACHE_FILE = "topics.json"
-_topics_cache = {"at": 0.0, "topics": []}
+_EMPTY_TOPICS = {"top": [], "notable": []}
+_topics_cache = {"at": 0.0, "topics": dict(_EMPTY_TOPICS)}
+
+# Conservative, high-precision clickbait/listicle markers. The model is the real
+# filter; this just trims the most obvious slop before curation (and protects the
+# heuristic fallback). Kept tight to avoid dropping real headlines.
+_SLOP_RE = re.compile(
+    r"\bif\s+you\s+remember\b"
+    r"|\byou\s+won'?t\s+believe\b"
+    r"|\b\d+\s+(things|ways|reasons|signs|tips|gadgets|products|gifts|deals)\b"
+    r"|\bthese\s+\d+\b"
+    r"|\baccording\s+to\s+users\b"
+    r"|\b(we|i)\s+tried\b"
+    r"|\b(top|best)\s+\d+\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_slop(title: str) -> bool:
+    return bool(_SLOP_RE.search(title or ""))
 
 # Filler words to ignore when finding the subject shared across headlines.
 _STOPWORDS = {
@@ -131,42 +152,64 @@ class Scraper:
                 break
         return articles
 
-    def get_trending_topics(self, count: int = 5, refresh: bool = False):
+    def get_trending_topics(self, refresh: bool = False):
         """
-        Find the topics being covered by the most distinct sources right now.
+        Find and curate the most significant trending stories right now.
 
         Sweeps top headlines across categories, clusters them by shared subject
-        keywords, and returns the stories covered by the most different outlets
-        (i.e. genuinely trending, not one-off articles). Results are cached in
-        memory and on disk; pass refresh=True to force a fresh sweep.
+        keywords (so a story shows up from many outlets), drops obvious slop, then
+        lets the model select the genuinely important stories and split them into
+        "top" and "notable" tiers. Cached in memory and on disk; pass refresh=True
+        to force a fresh sweep.
 
-        :param int count: Number of topics to return.
         :param bool refresh: Bypass cache and re-sweep.
-        :return: List of dicts with 'title' (display label), 'query' (search
-                 string), and 'source_count' (how many outlets cover it).
+        :return: dict {"top": [...], "notable": [...]} of topic dicts, each with
+                 'title' (display label), 'query' (search string), and
+                 'source_count' (how many outlets cover it).
         """
         now = time.time()
         if not refresh:
-            if _topics_cache["topics"] and now - _topics_cache["at"] < _TOPICS_CACHE_TTL:
-                return _topics_cache["topics"][:count]
-            # Fall back to the persisted copy (survives restarts).
+            if self._cache_fresh(now):
+                return _topics_cache["topics"]
             persisted = cache.load(_TOPICS_CACHE_FILE)
-            if persisted and now - persisted.get("at", 0) < _TOPICS_CACHE_TTL:
+            if (
+                persisted
+                and isinstance(persisted.get("topics"), dict)
+                and now - persisted.get("at", 0) < _TOPICS_CACHE_TTL
+            ):
                 _topics_cache.update(at=persisted["at"], topics=persisted["topics"])
-                return persisted["topics"][:count]
+                return persisted["topics"]
 
-        pool = self._fetch_headline_pool()
-        topics = self._cluster_topics(pool)
-        if topics:
-            _topics_cache.update(at=now, topics=topics)
-            cache.save(_TOPICS_CACHE_FILE, {"at": now, "topics": topics})
-            return topics[:count]
+        candidates = self._cluster_topics(self._fetch_headline_pool())
+        candidates = [c for c in candidates if not _looks_like_slop(c["title"])][:15]
+        tiered = self._curate(candidates)
+
+        if tiered["top"] or tiered["notable"]:
+            _topics_cache.update(at=now, topics=tiered)
+            cache.save(_TOPICS_CACHE_FILE, {"at": now, "topics": tiered})
+            return tiered
 
         # Sweep produced nothing (e.g. API hiccup) — serve whatever we still have.
-        fallback = _topics_cache["topics"] or (cache.load(_TOPICS_CACHE_FILE) or {}).get(
-            "topics", []
-        )
-        return fallback[:count]
+        return _topics_cache["topics"] or (cache.load(_TOPICS_CACHE_FILE) or {}).get(
+            "topics"
+        ) or dict(_EMPTY_TOPICS)
+
+    @staticmethod
+    def _cache_fresh(now):
+        topics = _topics_cache["topics"]
+        has_content = topics.get("top") or topics.get("notable")
+        return has_content and now - _topics_cache["at"] < _TOPICS_CACHE_TTL
+
+    def _curate(self, candidates):
+        """Model-curate candidates into top/notable tiers; heuristic fallback."""
+        import merger  # local import keeps scraper importable without the model
+
+        result = merger.curate_topics(candidates)
+        if result is None:
+            # Model unavailable: fall back to source-count order (already sorted).
+            return {"top": candidates[:6], "notable": candidates[6:12]}
+        important, notable = result
+        return {"top": important[:6], "notable": notable[:6]}
 
     def _fetch_headline_pool(self):
         """Gather a de-duplicated pool of top headlines across categories."""

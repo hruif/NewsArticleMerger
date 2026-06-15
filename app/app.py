@@ -58,7 +58,7 @@ def search_page():
         topics = main.get_topics(refresh=refresh)
     except Exception as e:
         print(f"Failed to load topics: {e}")
-        topics = []
+        topics = {"top": [], "notable": []}
     return render_template("search.html", topics=topics)
 
 

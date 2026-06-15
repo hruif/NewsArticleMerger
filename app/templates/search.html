@@ -6,18 +6,27 @@
     <button class="btn" type="submit">Search</button>
 </form>
 
-{% if topics %}
-<div class="section-label">
-    <span>Trending</span>
-    <a class="refresh" href="/?refresh=1">Refresh</a>
-</div>
+{% macro topic_list(items) %}
 <ul class="topics">
-    {% for topic in topics %}
+    {% for topic in items %}
     <li>
         <a href="/results?query={{ topic.query | urlencode }}">{{ topic.title }}</a>
         <span class="src">{{ topic.source_count }} source{{ 's' if topic.source_count != 1 }}</span>
     </li>
     {% endfor %}
 </ul>
+{% endmacro %}
+
+{% if topics.top %}
+<div class="section-label">
+    <span>Top stories</span>
+    <a class="refresh" href="/?refresh=1">Refresh</a>
+</div>
+{{ topic_list(topics.top) }}
+{% endif %}
+
+{% if topics.notable %}
+<div class="section-label"><span>Also trending</span></div>
+{{ topic_list(topics.notable) }}
 {% endif %}
 {% endblock %}

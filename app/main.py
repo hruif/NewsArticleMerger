@@ -15,9 +15,9 @@ mrgr = Merger()
 scrpr = Scraper()
 
 
-def get_topics(count: int = 5, refresh: bool = False):
-    """Topics covered by the most distinct sources, for the homepage."""
-    return scrpr.get_trending_topics(count, refresh=refresh)
+def get_topics(refresh: bool = False):
+    """Curated trending topics for the homepage: {"top": [...], "notable": [...]}."""
+    return scrpr.get_trending_topics(refresh=refresh)
 
 
 def get_sources(query: str):

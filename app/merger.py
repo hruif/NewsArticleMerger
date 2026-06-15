@@ -11,6 +11,66 @@ MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 client = genai.Client(api_key=config.load_key("GEMINI_API_KEY", "gemini_api_key.txt"))
 
+CURATION_PROMPT = """You are a senior news editor curating a news homepage. Below is a numbered list of currently trending headlines.
+
+Pick the genuinely SIGNIFICANT news — major politics and government, world events and conflicts, the economy, and science/health or other stories of broad consequence and influence.
+
+EXCLUDE low-value "slop": clickbait, listicles ("If you remember these...", "10 things..."), how-to/tips, product roundups/reviews/deals, celebrity gossip, and SEO filler.
+
+Respond with ONLY a JSON object (no prose, no code fences):
+{"important": [indices of the most significant stories, most important first],
+ "notable": [indices of other legitimate but less momentous real-news stories]}
+Use at most 6 indices per list. Put NO clickbait/slop index in either list. Indices are the numbers below.
+
+Headlines:
+"""
+
+
+def curate_topics(candidates):
+    """Editor-curate clustered topic candidates with the model.
+
+    :param list candidates: dicts with "title" and "source_count".
+    :return: (important, notable) lists of candidate dicts, or None on failure.
+    """
+    if not candidates:
+        return [], []
+    listing = "\n".join(
+        f'{i}. {c.get("title", "")} — covered by {c.get("source_count", 1)} sources'
+        for i, c in enumerate(candidates)
+    )
+    try:
+        response = client.models.generate_content(
+            model=MODEL_NAME, contents=CURATION_PROMPT + listing
+        )
+        text = response.text or ""
+    except Exception as e:
+        print(f"topic curation failed: {e}")
+        return None
+
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+    except ValueError:
+        return None
+
+    def pick(key, exclude):
+        out = []
+        values = data.get(key)
+        if not isinstance(values, list):
+            return out
+        for idx in values:
+            if isinstance(idx, int) and 0 <= idx < len(candidates) and idx not in exclude:
+                exclude.add(idx)
+                out.append(candidates[idx])
+        return out
+
+    used = set()
+    important = pick("important", used)
+    notable = pick("notable", used)
+    return important, notable
+
 # Cap how much of each article we feed the model; trims tokens (and latency)
 # without losing the substance of a news article.
 MAX_CHARS_PER_ARTICLE = 6000
