@@ -15,6 +15,7 @@ import re
 import time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import requests
@@ -36,7 +37,31 @@ SCRAPE_TIMEOUT = 8  # seconds per article
 MAX_WORKERS = 10
 
 NEWSDATA_URL = "https://newsdata.io/api/1/latest"
+NEWSDATA_ARCHIVE_URL = "https://newsdata.io/api/1/archive"
 NEWSDATA_KEY = config.load_key("NEWSDATA_KEY", "newsdata_key.txt")
+
+
+def _env_int(name, default, minimum=1):
+    try:
+        return max(minimum, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# Regular searches use the archive endpoint so important stories remain
+# findable after the latest/breaking-news feed has moved on.
+_SEARCH_LOOKBACK_DAYS = _env_int("NEWS_SEARCH_LOOKBACK_DAYS", 7)
+_SEARCH_PAGE_LIMIT = _env_int("NEWS_SEARCH_PAGES", 2)
+_SEARCH_PAGE_SIZE = _env_int("NEWS_SEARCH_SIZE", 10)
+_SEARCH_CANDIDATE_MULTIPLIER = _env_int("NEWS_CANDIDATE_MULTIPLIER", 4)
+_SEARCH_PRIORITY_DOMAIN = os.environ.get("NEWS_PRIORITY_DOMAIN", "medium").strip()
+_LATEST_TIMEFRAME_HOURS = min(48, _env_int("NEWS_LATEST_TIMEFRAME_HOURS", 48))
+_BEST_RECENCY_WEIGHT = 1.0
+_LATEST_RECENCY_WEIGHT = 6.0
+
+MODE_BEST = "best"
+MODE_LATEST = "latest"
+_SEARCH_MODES = {MODE_BEST, MODE_LATEST}
 
 # Trending-topics tuning. Sweeping categories builds a pool large enough that the
 # same story shows up from many outlets. Lead with hard-news categories so the
@@ -71,6 +96,11 @@ _SLOP_RE = re.compile(
 def _looks_like_slop(title: str) -> bool:
     return bool(_SLOP_RE.search(title or ""))
 
+
+def normalize_search_mode(mode: str) -> str:
+    mode = (mode or MODE_BEST).strip().lower()
+    return mode if mode in _SEARCH_MODES else MODE_BEST
+
 # Filler words to ignore when finding the subject shared across headlines.
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for", "with",
@@ -88,16 +118,33 @@ _STOPWORDS = {
 }
 
 
-def _newsdata_latest(**params):
-    """Call newsdata.io /latest and return its list of article results."""
+def _newsdata_request(url, **params):
+    """Call a newsdata.io endpoint and return its decoded response object."""
     params["apikey"] = NEWSDATA_KEY
     params.setdefault("language", "en")
-    response = requests.get(NEWSDATA_URL, params=params, timeout=10)
+    response = requests.get(url, params=params, timeout=10)
     response.raise_for_status()
     data = response.json()
     if data.get("status") != "success":
-        return []
-    return data.get("results", [])
+        message = data.get("results") or data.get("message") or data
+        print(f"newsdata request failed: {message}")
+        return {}
+    return data
+
+
+def _newsdata_latest(**params):
+    """Call newsdata.io /latest and return its list of article results."""
+    return _newsdata_request(NEWSDATA_URL, **params).get("results", [])
+
+
+def _newsdata_latest_page(**params):
+    """Call newsdata.io /latest and return the decoded response object."""
+    return _newsdata_request(NEWSDATA_URL, **params)
+
+
+def _newsdata_archive(**params):
+    """Call newsdata.io /archive and return the decoded response object."""
+    return _newsdata_request(NEWSDATA_ARCHIVE_URL, **params)
 
 
 def _to_internal(article):
@@ -105,32 +152,67 @@ def _to_internal(article):
     return {
         "title": article.get("title"),
         "url": article.get("link"),
-        "source": {"name": article.get("source_name") or article.get("source_id") or "Unknown"},
+        "description": article.get("description") or article.get("content") or "",
+        "pub_date": article.get("pubDate"),
+        "source": {
+            "name": article.get("source_name") or article.get("source_id") or "Unknown"
+        },
     }
 
 
 class Scraper:
-    def get_articles(self, query: str, num_articles: int):
+    def get_articles(self, query: str, num_articles: int, mode: str = MODE_BEST):
         """
         Get a diverse set of articles (with metadata) for a query.
 
-        Searches newsdata.io (one credit), orders results so different news sources
-        come first (for a wide range of perspectives), scrapes candidates in
-        parallel, and returns the first `num_articles` that scrape successfully.
+        Best-coverage mode searches the archive over roughly a week, ranking
+        relevance over recency. Latest mode searches the live latest endpoint and
+        gives recency a stronger, capped weight. Both modes then diversity-order
+        by source domain, scrape candidates in parallel, and return the first
+        `num_articles` that scrape successfully.
 
         :param string query: Query to search for.
         :param int num_articles: Number of articles to include.
+        :param string mode: "best" for coverage, "latest" for fresher updates.
         :return: List of dicts: {"title", "url", "name" (source), "text"}.
         """
+        mode = normalize_search_mode(mode)
         try:
-            results = _newsdata_latest(q=query)
+            if mode == MODE_LATEST:
+                results = self._search_latest(query, num_articles)
+            else:
+                results = self._search_archive(query, num_articles)
+                if not results:
+                    print(
+                        f"archive search returned no results for {query!r}; "
+                        "falling back to latest"
+                    )
+                    results = _newsdata_latest(q=query)
         except Exception as e:
-            print(f"newsdata search failed for {query!r}: {e}")
-            return []
+            if mode == MODE_LATEST:
+                print(f"newsdata latest search failed for {query!r}: {e}")
+                return []
+            print(
+                f"newsdata archive search failed for {query!r}: {e}; "
+                "falling back to latest"
+            )
+            try:
+                results = _newsdata_latest(q=query)
+            except Exception as latest_error:
+                print(f"newsdata latest fallback failed for {query!r}: {latest_error}")
+                return []
 
-        candidates = self._order_by_diversity([_to_internal(a) for a in results])
-        # Only attempt a bounded number of scrapes (enough to cover failures).
-        candidates = candidates[: num_articles * 2]
+        candidates = [_to_internal(a) for a in results]
+        candidates = self._rank_by_relevance(candidates, query, mode)
+        candidates = self._order_by_diversity(candidates)
+
+        # Scrape a broader pool than we need so a few 403s/parser failures do not
+        # force the final article back to whatever happened to scrape first.
+        scrape_limit = max(num_articles * 2, num_articles * _SEARCH_CANDIDATE_MULTIPLIER)
+        candidates = candidates[:scrape_limit]
+
+        if not candidates:
+            return []
 
         # Scrape in parallel; keep each candidate paired with its scraped text.
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -151,6 +233,117 @@ class Scraper:
             if len(articles) >= num_articles:
                 break
         return articles
+
+    def _search_latest(self, query: str, num_articles: int):
+        """Search the live feed for fresh updates, paging enough to rank locally."""
+        params = {
+            "q": query,
+            "timeframe": _LATEST_TIMEFRAME_HOURS,
+            "size": _SEARCH_PAGE_SIZE,
+        }
+        if _SEARCH_PRIORITY_DOMAIN:
+            params["prioritydomain"] = _SEARCH_PRIORITY_DOMAIN
+
+        target = max(num_articles * _SEARCH_CANDIDATE_MULTIPLIER, num_articles)
+        results, seen = [], set()
+        page = None
+        for _ in range(_SEARCH_PAGE_LIMIT):
+            page_params = dict(params)
+            if page:
+                page_params["page"] = page
+            data = _newsdata_latest_page(**page_params)
+            for article in data.get("results", []):
+                url = article.get("link")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                results.append(article)
+            if len(results) >= target:
+                break
+            page = data.get("nextPage")
+            if not page:
+                break
+        return results
+
+    def _search_archive(self, query: str, num_articles: int):
+        """Search roughly the past week, paging enough to rank a wider pool."""
+        to_date = datetime.now(timezone.utc).date()
+        from_date = to_date - timedelta(days=_SEARCH_LOOKBACK_DAYS)
+        params = {
+            "q": query,
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+            "size": _SEARCH_PAGE_SIZE,
+        }
+        if _SEARCH_PRIORITY_DOMAIN:
+            params["prioritydomain"] = _SEARCH_PRIORITY_DOMAIN
+
+        target = max(num_articles * _SEARCH_CANDIDATE_MULTIPLIER, num_articles)
+        results, seen = [], set()
+        page = None
+        for _ in range(_SEARCH_PAGE_LIMIT):
+            page_params = dict(params)
+            if page:
+                page_params["page"] = page
+            data = _newsdata_archive(**page_params)
+            for article in data.get("results", []):
+                url = article.get("link")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                results.append(article)
+            if len(results) >= target:
+                break
+            page = data.get("nextPage")
+            if not page:
+                break
+        return results
+
+    def _rank_by_relevance(self, articles, query, mode):
+        """Prefer direct query matches; scale recency by search mode."""
+        query_terms = self._keywords(query)
+        phrase = " ".join(query.lower().split())
+        if mode == MODE_LATEST:
+            recency_weight = _LATEST_RECENCY_WEIGHT
+            recency_window = max(_LATEST_TIMEFRAME_HOURS / 24, 1 / 24)
+        else:
+            recency_weight = _BEST_RECENCY_WEIGHT
+            recency_window = _SEARCH_LOOKBACK_DAYS
+
+        def score(article):
+            title = article.get("title") or ""
+            desc = article.get("description") or ""
+            title_l = title.lower()
+            desc_l = desc.lower()
+            title_terms = self._keywords(title)
+            desc_terms = self._keywords(desc)
+
+            value = 0.0
+            if phrase and phrase in title_l:
+                value += 10
+            if phrase and phrase in desc_l:
+                value += 5
+            value += 4 * len(query_terms & title_terms)
+            value += 1.5 * len(query_terms & desc_terms)
+
+            age = self._age_days(article.get("pub_date"))
+            if age is not None:
+                value += recency_weight * max(0, recency_window - age) / recency_window
+            return value
+
+        return sorted(articles, key=score, reverse=True)
+
+    @staticmethod
+    def _age_days(pub_date):
+        if not pub_date:
+            return None
+        try:
+            parsed = datetime.fromisoformat(pub_date.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - parsed).total_seconds() / 86400
+        except ValueError:
+            return None
 
     def get_trending_topics(self, refresh: bool = False):
         """

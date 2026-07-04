@@ -31,21 +31,26 @@ All app code lives in `app/` and modules import each other by **bare name**
 - `app/cache.py` — file-based JSON cache. `load(name, default)` / atomic `save(name, data)`
   (tempfile + `os.replace`). Dir = `$CACHE_DIR` or `<repo-root>/cache`.
 - `app/scraper.py` — `Scraper`:
-  - `get_articles(query, n)` → `list[{title,url,name,text}]`, diversity-ordered,
-    parallel scrape (ThreadPoolExecutor), browser User-Agent to beat 403s.
+  - `get_articles(query, n, mode)` → `list[{title,url,name,text}]`: `best` mode
+    searches `/archive` over roughly the past week, scans a wider candidate pool,
+    ranks by query relevance with a small recency nudge, diversity-orders by
+    domain, then parallel-scrapes (ThreadPoolExecutor) with a browser User-Agent
+    to beat 403s. Falls back to `/latest` if archive search is unavailable or
+    empty. `latest` mode uses `/latest` with a stronger capped recency boost.
   - `get_trending_topics(refresh=False)` → `{"top":[...], "notable":[...]}`:
     category sweep → keyword clustering (seed-anchored) → rank by distinct source
     count → slop regex prefilter → Gemini curation (`merger.curate_topics`).
-  - News source: **newsdata.io** `/latest` endpoint.
+  - News source: **newsdata.io** `/archive` for regular searches; `/latest` for
+    trending topics and fallback.
 - `app/merger.py` — `Merger`, Gemini via the **`google-genai`** SDK (`from google import genai`):
   - `merge_stream(sources)` generator → yields `("delta", html_so_far)` then
     `("done", {article_html, tldr, perspectives})`. Splits model output on
     `===METADATA===` delimiter; tolerant JSON parse of the trailer.
   - `curate_topics(candidates)` → `(important, notable)` or `None` on failure.
   - Model: `gemini-2.5-flash-lite` (fast; override via `GEMINI_MODEL`).
-- `app/main.py` — pipeline glue + per-query article cache (`articles.json`):
+- `app/main.py` — pipeline glue + per-query/mode article cache (`articles.json`):
   `get_topics`, `get_sources`, `get_cached` (ignores legacy entries without
-  `article_html`), `save_article`, `list_recent`.
+  `article_html` or the current cache version), `save_article`, `list_recent`.
 - `app/app.py` — Flask routes + SSE + **nh3 sanitization**:
   - `/` search page + trending, `/results` loading screen, `/recent` cached list,
     `GET /api/article/stream` (SSE: `delta`/`done`/`error` events).
@@ -112,6 +117,11 @@ No committed test files; tests are ad-hoc. The standard battery:
   reintroduce server-side quote-matching (it was tried and removed — the model
   quotes source text, not its own rewritten prose, so matches were ~0%).
 - newsdata.io free tier = 200 credits/day; trending sweep + searches consume them.
+- Regular searches can consume up to `NEWS_SEARCH_PAGES` archive requests before
+  local ranking/scraping. If the key cannot access archive search, the app logs
+  the issue and falls back to `/latest` behavior.
+- Search modes are `best` (default, week/archive, significance-oriented) and
+  `latest` (live/latest endpoint, freshness-oriented). Cache keys include mode.
 
 ## Optional / not-yet-done (only if asked)
 

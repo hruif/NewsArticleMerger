@@ -2,15 +2,30 @@
 
 {% block content %}
 <form class="search" action="/results" method="GET">
-    <input type="text" name="query" placeholder="Search any topic…" required aria-label="Search a topic">
-    <button class="btn" type="submit">Search</button>
+    <div class="search-row">
+        <input type="text" name="query" placeholder="Search any topic…" required aria-label="Search a topic">
+        <button class="btn" type="submit">Search</button>
+    </div>
+    <div class="mode-picker" role="radiogroup" aria-label="Search mode">
+        {% for mode in modes %}
+        <label class="mode-option">
+            <input
+                type="radio"
+                name="mode"
+                value="{{ mode.value }}"
+                {% if mode.value == selected_mode %}checked{% endif %}
+            >
+            <span>{{ mode.label }}</span>
+        </label>
+        {% endfor %}
+    </div>
 </form>
 
 {% macro topic_list(items) %}
 <ul class="topics">
     {% for topic in items %}
     <li>
-        <a href="/results?query={{ topic.query | urlencode }}">{{ topic.title }}</a>
+        <a href="/results?query={{ topic.query | urlencode }}&amp;mode=best">{{ topic.title }}</a>
         <span class="src">{{ topic.source_count }} source{{ 's' if topic.source_count != 1 }}</span>
     </li>
     {% endfor %}

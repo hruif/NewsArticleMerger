@@ -9,8 +9,10 @@
 <ul class="topics">
     {% for item in items %}
     <li>
-        <a href="/results?query={{ item.query | urlencode }}">{{ item.query }}</a>
-        <span class="src when" data-ts="{{ item.created_at }}"></span>
+        <a href="/results?query={{ item.query | urlencode }}&amp;mode={{ item.mode }}">{{ item.query }}</a>
+        <span class="src">
+            {{ item.mode_label }} · <span class="when" data-ts="{{ item.created_at }}"></span>
+        </span>
     </li>
     {% endfor %}
 </ul>

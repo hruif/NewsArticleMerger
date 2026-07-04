@@ -17,6 +17,13 @@ article that cross-references the sources and presents multiple perspectives.
 The homepage also surfaces **trending topics** — stories currently being covered
 by the most distinct news sources — that you can click to read a merged write-up.
 
+Searches support two modes:
+
+- **Best coverage** (default) looks back roughly a week and prioritizes relevance
+  and source quality, with recency used as a tie-breaker.
+- **Latest** searches the fresher live feed and gives recent articles a stronger,
+  capped boost.
+
 The merged article **streams in live** as Gemini writes it, with:
 
 - **Inline citations** linking claims to a numbered **Sources** list
@@ -95,15 +102,21 @@ gunicorn --chdir app --worker-class gthread --workers 1 --threads 8 --timeout 12
 
 ## Configuration
 
-| Env var             | Default                  | Purpose                                                       |
-| ------------------- | ------------------------ | ------------------------------------------------------------ |
-| `NEWSDATA_KEY`      | _(falls back to file)_   | newsdata.io key                                              |
-| `GEMINI_API_KEY`    | _(falls back to file)_   | Gemini key                                                   |
-| `GEMINI_MODEL`      | `gemini-2.5-flash-lite`  | Gemini model (`gemini-3.1-flash-lite` is richer but slower)  |
-| `TOPICS_CATEGORIES` | `business,technology,science,health,world` | Categories swept for trending topics (1 credit each) |
-| `TOPICS_CACHE_TTL`  | `3600`                   | Seconds before trending topics are re-swept                  |
-| `CACHE_DIR`         | `<repo>/cache`           | Where the JSON cache is written (point at a disk in prod)    |
-| `FLASK_DEBUG`       | _(off)_                  | Set to `1` to enable the dev reloader/debugger locally       |
+| Env var                         | Default                  | Purpose                                                       |
+| ------------------------------- | ------------------------ | ------------------------------------------------------------ |
+| `NEWSDATA_KEY`                  | _(falls back to file)_   | newsdata.io key                                              |
+| `GEMINI_API_KEY`                | _(falls back to file)_   | Gemini key                                                   |
+| `GEMINI_MODEL`                  | `gemini-2.5-flash-lite`  | Gemini model (`gemini-3.1-flash-lite` is richer but slower)  |
+| `NEWS_SEARCH_LOOKBACK_DAYS`     | `7`                      | Regular searches use the archive endpoint over roughly this many days |
+| `NEWS_SEARCH_PAGES`             | `2`                      | Archive pages to scan before ranking candidates locally      |
+| `NEWS_SEARCH_SIZE`              | `10`                     | Requested articles per archive page (free plans may cap this) |
+| `NEWS_PRIORITY_DOMAIN`          | `medium`                 | Prefer higher-authority domains (`top`, `medium`, `low`, or empty) |
+| `NEWS_CANDIDATE_MULTIPLIER`     | `4`                      | Scrape this many candidates per final source needed          |
+| `NEWS_LATEST_TIMEFRAME_HOURS`   | `48`                     | Latest-mode search window, capped at 48 hours                |
+| `TOPICS_CATEGORIES`             | `top,world,politics,business,science` | Categories swept for trending topics (1 credit each) |
+| `TOPICS_CACHE_TTL`              | `3600`                   | Seconds before trending topics are re-swept                  |
+| `CACHE_DIR`                     | `<repo>/cache`           | Where the JSON cache is written (point at a disk in prod)    |
+| `FLASK_DEBUG`                   | _(off)_                  | Set to `1` to enable the dev reloader/debugger locally       |
 
 ## Caching
 
@@ -113,8 +126,10 @@ Results are cached on disk under `cache/` (git-ignored):
 - **Trending topics** persist across restarts and refresh automatically every
   `TOPICS_CACHE_TTL` seconds (default 60 min).
 
-Both have a **Refresh** link in the UI to force a fresh result. To clear the
-cache entirely, delete the `cache/` directory.
+Both have a **Refresh** link in the UI to force a fresh result. Article cache
+entries are keyed by both query and search mode, and versioned so older search
+strategies regenerate automatically after code changes. To clear the cache
+entirely, delete the `cache/` directory.
 
 > **Note:** the cache lives on the instance's filesystem, which is ephemeral on
 > most hosts (it resets on redeploy/restart and isn't shared across instances).
@@ -156,9 +171,16 @@ instance sleeps after ~15 min idle and cold-starts on the next visit.
 
 ## Notes
 
-- The trending-topic sweep is restricted to US headlines (`country=us`).
-- newsdata.io's free tier only searches roughly the **last 48 hours**, so very old
-  or evergreen topics may return few articles.
+- Regular searches prefer newsdata.io's `/archive` endpoint over roughly the past
+  week, then locally rank a wider candidate pool by query relevance before
+  scraping. The default **Best coverage** mode uses this path. If archive search
+  is unavailable or empty, the app falls back to `/latest`.
+- **Latest** mode uses newsdata.io's `/latest` endpoint and gives recency more
+  weight while still requiring query relevance.
+- The trending-topic sweep is restricted to US headlines (`country=us`) and still
+  uses `/latest`.
+- newsdata.io's archive access is plan-dependent; accounts limited to `/latest`
+  will still only search roughly the **last 48 hours**.
 
 ## Future ideas
 

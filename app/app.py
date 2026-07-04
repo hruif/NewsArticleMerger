@@ -42,11 +42,12 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-def _message_done(html: str) -> str:
+def _message_done(html: str, mode: str) -> str:
     """A terminal 'done' event carrying just a message (empty interactivity)."""
     return _sse("done", {
         "article_html": html, "tldr": [], "sources": [], "perspectives": [],
         "cached": False, "created_at": None,
+        "mode": mode, "mode_label": main.mode_label(mode),
     })
 
 
@@ -59,14 +60,26 @@ def search_page():
     except Exception as e:
         print(f"Failed to load topics: {e}")
         topics = {"top": [], "notable": []}
-    return render_template("search.html", topics=topics)
+    return render_template(
+        "search.html",
+        topics=topics,
+        modes=main.SEARCH_MODES,
+        selected_mode=main.normalize_mode(request.args.get("mode")),
+    )
 
 
 # Results page: renders a loading screen immediately, then opens the SSE stream.
 @app.route("/results")
 def results_page():
     query = request.args.get("query", "")
-    return render_template("results.html", query=query)
+    mode = main.normalize_mode(request.args.get("mode"))
+    return render_template(
+        "results.html",
+        query=query,
+        mode=mode,
+        mode_label=main.mode_label(mode),
+        modes=main.SEARCH_MODES,
+    )
 
 
 # Recently generated (cached) articles.
@@ -80,24 +93,26 @@ def recent_page():
 @app.route("/api/article/stream")
 def api_article_stream():
     query = request.args.get("query", "")
+    mode = main.normalize_mode(request.args.get("mode"))
     refresh = request.args.get("refresh") == "1"
 
     def generate():
         if not query:
-            yield _message_done("<p>Please enter a search term.</p>")
+            yield _message_done("<p>Please enter a search term.</p>", mode)
             return
 
         if not refresh:
-            cached = main.get_cached(query)
+            cached = main.get_cached(query, mode)
             if cached:
                 yield _sse("done", {**cached, "cached": True})
                 return
 
         try:
-            sources = main.get_sources(query)
+            sources = main.get_sources(query, mode)
             if not sources:
                 yield _message_done(
-                    "<p>No articles could be retrieved for that query. Try another search.</p>"
+                    "<p>No articles could be retrieved for that query. Try another search.</p>",
+                    mode,
                 )
                 return
 
@@ -117,16 +132,18 @@ def api_article_stream():
 
             result = {
                 "query": query,
+                "mode": mode,
+                "mode_label": main.mode_label(mode),
                 "created_at": time.time(),
                 "article_html": _clean(final["article_html"]),
                 "tldr": final["tldr"],
                 "sources": sources_meta,
                 "perspectives": final["perspectives"],
             }
-            main.save_article(query, result)  # only successful results are cached
+            main.save_article(query, result, mode)  # only successful results are cached
             yield _sse("done", {**result, "cached": False})
         except Exception as e:
-            print(f"Failed to build article for {query!r}: {e}")
+            print(f"Failed to build article for {query!r} ({mode}): {e}")
             yield _sse("error", {
                 "message": "Sorry, something went wrong building this article. Please try again."
             })

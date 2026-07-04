@@ -5,6 +5,14 @@
 {% block content %}
 <button class="btn btn-ghost back back-top" onclick="window.location.href='/'">← Back to Search</button>
 <h1>{{ query }}</h1>
+<div class="mode-tabs" aria-label="Search mode">
+    {% for item in modes %}
+    <a
+        class="mode-tab{% if item.value == mode %} active{% endif %}"
+        href="/results?query={{ query | urlencode }}&amp;mode={{ item.value }}"
+    >{{ item.label }}</a>
+    {% endfor %}
+</div>
 
 <div id="loading">
     <div class="spinner"></div>
@@ -39,13 +47,17 @@
 {% block scripts %}
 <script>
     const query = {{ query | tojson }};
+    const mode = {{ mode | tojson }};
+    const modeLabel = {{ mode_label | tojson }};
     const isRefresh = new URLSearchParams(window.location.search).get('refresh') === '1';
     const el = (id) => document.getElementById(id);
     let current = null;          // latest done payload (for export)
     let finished = false;        // guards against EventSource auto-reconnect
     let sourceNameMap = {};      // source id -> outlet name
 
+    const modeParam = '&mode=' + encodeURIComponent(mode);
     const streamUrl = '/api/article/stream?query=' + encodeURIComponent(query) +
+        modeParam +
         (isRefresh ? '&refresh=1' : '');
     const es = new EventSource(streamUrl);
 
@@ -85,12 +97,13 @@
     };
 
     function renderMeta(d) {
-        let label = d.cached ? 'Loaded from cache' : 'Freshly generated';
+        let label = (d.mode_label || modeLabel) + ' · ';
+        label += d.cached ? 'Loaded from cache' : 'Freshly generated';
         if (d.created_at) label += ' · ' + new Date(d.created_at * 1000).toLocaleString();
         const m = el('meta');
         m.textContent = label + ' · ';
         const a = document.createElement('a');
-        a.href = '/results?query=' + encodeURIComponent(query) + '&refresh=1';
+        a.href = '/results?query=' + encodeURIComponent(query) + modeParam + '&refresh=1';
         a.textContent = 'Refresh';
         m.appendChild(a);
         m.hidden = false;
@@ -211,7 +224,8 @@
     // --- Export ---
     el('print-btn').onclick = () => window.print();
     el('link-btn').onclick = () => {
-        const url = location.origin + location.pathname + '?query=' + encodeURIComponent(query);
+        const url = location.origin + location.pathname + '?query=' +
+            encodeURIComponent(query) + modeParam;
         navigator.clipboard.writeText(url).then(() => flashBtn('link-btn', 'Link copied!'));
     };
     el('copy-btn').onclick = () => {
