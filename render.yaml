@@ -15,7 +15,7 @@ services:
       --bind 0.0.0.0:$PORT app:app
     envVars:
       - key: PYTHON_VERSION
-        value: "3.12.7"
+        value: "3.12.15"
       - key: TOPICS_CACHE_TTL
         value: "3600"
       - key: NEWSDATA_KEY

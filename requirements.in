@@ -1,0 +1,9 @@
+google-genai
+newspaper3k
+flask
+lxml_html_clean
+nh3
+requests
+gunicorn
+Pillow>=13.0.0
+certifi>=2026.10.19
