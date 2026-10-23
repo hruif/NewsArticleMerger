@@ -1,6 +1,6 @@
 # Hugging Face Spaces (Docker SDK). Builds the Flask app and serves it with
 # gunicorn on port 7860 (the port HF Spaces exposes).
-FROM python:3.12-slim
+FROM python:3.12.15-slim
 
 # Run as a non-root user (Hugging Face Spaces best practice).
 RUN useradd -m -u 1000 user

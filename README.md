@@ -49,7 +49,7 @@ query ─▶ newsdata.io (find article URLs) ─▶ newspaper3k (scrape text, in
 
 ## Requirements
 
-- Python 3.9+ (developed on 3.12)
+- Python 3.12.15 (see `.python-version`)
 - A [newsdata.io](https://newsdata.io/) API key (free tier: 200 credits/day,
   commercial use allowed) and a [Google Gemini](https://aistudio.google.com/apikey) API key
 
@@ -189,3 +189,21 @@ instance sleeps after ~15 min idle and cold-starts on the next visit.
   now to keep the UI simple; newsdata.io supports most of these, so it can be
   added later if needed.
 - Cache eviction (TTL / size cap) for the per-query article cache.
+
+## Reproducible Python dependencies
+
+Use Python 3.12 and install the checked-in security-reviewed lock file:
+
+```sh
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --require-hashes -r requirements.txt
+```
+
+To refresh all pinned dependencies with uv 0.13.5 or later:
+
+```sh
+uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --upgrade -o requirements.txt
+```
+
+Review the diff, run the project checks, and audit the resulting environment before committing an update.
